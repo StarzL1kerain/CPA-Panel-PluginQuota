@@ -64,24 +64,77 @@ curl -s http://127.0.0.1:1235/management.html | grep -o plugin_quota | wc -l    
 bash scripts/deploy.sh            # 其它安装方式：CFG=/你的配置目录 bash scripts/deploy.sh
 ```
 
-### 面板文件在哪（按安装方式）
+### 各安装方式：找到文件 → 替换 → 不用重启
 
-**补丁与安装方式无关**（就是替换一个静态文件），位置规则实测为 **`<配置目录>/static/management.html`**：
-
-| 安装方式 | 配置目录 | 面板文件位置 |
-|---|---|---|
-| **Linux 一键安装脚本**（本仓库实测）| `~/.config/cliproxyapi/` | `~/.config/cliproxyapi/static/management.html` ✅ |
-| Arch Linux (AUR) | `~/.cli-proxy-api/` | `~/.cli-proxy-api/static/management.html`（按同一规则推出）|
-| Docker | `/CLIProxyAPI/config.yaml` | **要自己挂载**：`-v /path/to/management.html:/CLIProxyAPI/static/management.html`（容器里自带的是原版）；官方文档还要求把插件目录挂到 `/CLIProxyAPI/plugins` |
-| macOS (Homebrew) | `brew --prefix` 下的 `etc/` | 同规则 |
-| Windows / 源码编译 | 启动时 `-config` 指向的那个文件所在目录 | 同规则 |
-
-不确定在哪就直接找：
+**补丁与安装方式无关**（就是替换一个静态文件）。通用流程 4 步，任何安装方式都一样：
 
 ```bash
+# 1) 找到面板文件
 find / -name management.html -not -path '*/node_modules/*' 2>/dev/null
-systemctl --user cat cliproxyapi.service | grep ExecStart        # Linux systemd：先看配置路径
+
+# 2) 备份（把 <路径> 换成第 1 步的结果）
+cp -a <路径> <路径>.bak-$(date +%Y%m%d-%H%M%S)
+
+# 3) 覆盖
+curl -L -o <路径> \
+  https://github.com/StarzL1kerain/CPA-Panel-PluginQuota/releases/latest/download/management.html
+
+# 4) 浏览器 Ctrl+Shift+R
 ```
+
+**需不需要重启：不需要。** 宿主**每次请求都从磁盘读**面板，不是启动时缓存到内存 ——
+换完文件下一次请求就生效；要刷新的只有浏览器（缓存）。Docker 里跑的是**同一份二进制**，行为一致。
+
+| 安装方式 | 面板文件位置 |
+|---|---|
+| **Linux 一键安装脚本**（本仓库实测）| `~/.config/cliproxyapi/static/management.html` ✅ |
+| **Docker**（已定位，见下）| 容器内 `/CLIProxyAPI/static/management.html` |
+| Arch Linux (AUR) | `~/.cli-proxy-api/static/management.html`（按同一规则推出）|
+| macOS (Homebrew) | `brew --prefix` 下的 `etc/` 同级 `static/`（按同一规则推出）|
+| Windows / 源码编译 | 启动时 `-config` 指向的文件所在目录同级 `static/`（按同一规则推出）|
+
+#### Docker
+
+面板在**容器里面**（容器自带一份），宿主机上直接看不到，所以要进容器或用 `docker cp`。
+先在宿主机上拿到容器名/ID：
+
+```bash
+docker ps                    # 找你的 CPA 容器（例如 eceasy/cli-proxy-api）
+```
+
+**方式 A：直接拷进容器**（最快；改的是容器的可写层）
+
+```bash
+# ① 宿主机上下载补丁版
+curl -L -o /tmp/management.html \
+  https://github.com/StarzL1kerain/CPA-Panel-PluginQuota/releases/latest/download/management.html
+
+# ② 备份容器里原来的面板，再覆盖进去
+docker exec <容器> cp -a /CLIProxyAPI/static/management.html \
+  /CLIProxyAPI/static/management.html.bak-$(date +%Y%m%d-%H%M%S)
+docker cp /tmp/management.html <容器>:/CLIProxyAPI/static/management.html
+
+# ③ 校验（容器里没 curl 就直接查文件；期望 14）
+docker exec <容器> sh -c 'grep -o plugin_quota /CLIProxyAPI/static/management.html | wc -l'
+```
+
+> ⚠️ `docker cp` 写进的是**容器的可写层**：`docker restart` 之后还在，但**容器被重建**就没了
+> （重新 `docker run`、`docker compose up --force-recreate`、升级镜像都会重建），需要再拷一次。
+
+**方式 B：把面板挂载进容器**（持久，重建也不丢）
+
+```bash
+docker run ... \
+  -v /宿主机路径/management.html:/CLIProxyAPI/static/management.html \
+  eceasy/cli-proxy-api:latest
+```
+
+面板文件就放在宿主机上（想换直接换宿主机那份）。官方文档本来就要求把配置、认证目录和**插件目录**
+挂出来：`-v .../config.yaml:/CLIProxyAPI/config.yaml`、`-v .../auth-dir:/root/.cli-proxy-api`、
+`-v .../plugins-dir:/CLIProxyAPI/plugins`。
+
+> Docker 这一节是按上面 4 步流程整理的（路径已实测定位），**替换动作本身未实测**；实测过的是
+> Linux 一键安装那条。有出入欢迎反馈。
 
 ### 自己从补丁构建（想换面板版本时）
 
@@ -160,6 +213,9 @@ remote-management:
 ```
 
 宿主会去查该仓库的**最新 Release**，下载其中名为 `management.html` 的资产 —— 本仓库的 Release 正好就是这个名字。
+
+> Docker 里用这条路要注意：下载落点是**容器的可写层**，容器重建就没了。想在容器里持久，
+> 要么把 `static/` 目录挂出来，要么就用上面 Docker 那节的拷入/挂卷方式。
 
 **但这条路有前提，已实测**：查 Release 走的是 **GitHub API**，未鉴权时**每个出口 IP 每小时只有 60 次**。
 在某台服务器上实测时，宿主的出口 IP 被限流，日志是：
