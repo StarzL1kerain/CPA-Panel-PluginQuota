@@ -96,22 +96,26 @@ curl -L -o <路径> \
 #### Docker
 
 面板在**容器里面**（容器自带一份），宿主机上直接看不到，所以要进容器或用 `docker cp`。
-先取到容器 ID —— **按名字过滤器直接拿，不用手动抄**：
+**不要手抄任何容器 ID** —— 先让脚本自己找出来：三种过滤依次尝试，最后一种是通用探测。
 
 ```bash
-# 把 cliproxyapi 换成你的容器名（不确定就先 docker ps 看一眼）
+# ① 按名字（子串匹配：cliproxyapi 能命中 cli-proxy-api 这类名字）
 CID=$(sudo docker ps -qf name=cliproxyapi)
-echo "$CID"
-
-# 名字不确定时，也可以按镜像找：
-# CID=$(sudo docker ps -q --filter ancestor=eceasy/cli-proxy-api:latest)
+# ② 按镜像
+[ -n "$CID" ] || CID=$(sudo docker ps -q --filter ancestor=eceasy/cli-proxy-api:latest)
+# ③ 通用探测：正在运行的容器里，哪个有 /CLIProxyAPI 就是它
+[ -n "$CID" ] || CID=$(sudo docker ps -q | while read -r id; do
+  sudo docker exec "$id" test -d /CLIProxyAPI 2>/dev/null && echo "$id"
+done)
+: "${CID:?没匹配到 CPA 容器，请 sudo docker ps 看一眼真实的名字或镜像}"
+echo "CPA 容器 = $CID"
 ```
 
-> `docker ps -qf name=…` 是**子串匹配**，`name=cliproxyapi` 能命中 `cliproxyapi`、`cli-proxy-api` 这类名字；
-> 取到空值时说明没匹配上，换名字再试。上面的 `sudo` 是因为本机 docker 需要 root ——
-> 如果你的账号在 `docker` 组里，去掉即可。
+> 上面用 `sudo` 是因为本机 docker 需要 root；如果你的账号在 `docker` 组里，去掉 `sudo` 即可。
 
 **方式 A：直接拷进容器**（最快；改的是容器的可写层）
+
+拿到 ID 后一条链路走完：下载 → 备份 → 覆盖 → 校验：
 
 ```bash
 # ① 宿主机上下载补丁版
@@ -141,6 +145,13 @@ docker run ... \
 面板文件就放在宿主机上（想换直接换宿主机那份）。官方文档本来就要求把配置、认证目录和**插件目录**
 挂出来：`-v .../config.yaml:/CLIProxyAPI/config.yaml`、`-v .../auth-dir:/root/.cli-proxy-api`、
 `-v .../plugins-dir:/CLIProxyAPI/plugins`。
+
+已经在跑的容器要改成挂载，得**用同样参数重建一次**。切换前先确认容器里确实回退了
+（上面那条 `grep -o plugin_quota … | wc -l` 得 `0`），并把现有挂载原样读出来照着补：
+
+```bash
+sudo docker inspect "$CID" --format '{{json .HostConfig.Binds}}'
+```
 
 > Docker 这一节是按上面 4 步流程整理的（路径已实测定位），**替换动作本身未实测**；实测过的是
 > Linux 一键安装那条。有出入欢迎反馈。
