@@ -174,6 +174,61 @@ CPA 返回面板时**只给 `Last-Modified`，没有 `Cache-Control`、也没有
 - 用户侧：`Ctrl+Shift+R`；无痕窗口；或访问 `.../management.html?v=2`
 - 根治：在反代（如 nginx）给面板单独加 `add_header Cache-Control "no-cache" always;`，改完 `nginx -t && nginx -s reload`
 
+## 补丁会不会被 CPA 自己覆盖？（怎么判断、怎么根治）
+
+会有，但只有这几种情形。先判断"到底是谁动的"：
+
+```bash
+# 1) 面板现在是什么版本（我们的产物：plugin_quota 出现 14 次）
+grep -o plugin_quota ~/.config/cliproxyapi/static/management.html | wc -l
+
+# 2) 宿主有没有自己下载过面板（每次下载都会留痕；注意 model_updater.go 那些是模型刷新，无关）
+journalctl --user -u cliproxyapi.service --since "12 hours ago" \
+  | grep -E 'updater\.go:(247|300|308)|management asset'
+```
+
+| 现象 | 原因 | 对策 |
+|---|---|---|
+| **服务器上的文件是新的**，但打开还是旧界面 | **浏览器启发式缓存**（CPA 只发 `Last-Modified`，没有 `Cache-Control` / `ETag`） | `Ctrl+Shift+R`；根治见方式 1（顺带解决缓存）|
+| 文件**变回原版**，且日志里没有下载记录 | 被别的进程覆盖（例如又跑了一次官方安装脚本、或在另一台实例上操作）| 用下面任一方式根治 |
+| 日志里出现 `updater.go … management asset updated` | **宿主自己下载覆盖**：`disable-auto-update-panel` 为 `false`，或面板文件缺失触发首次下载 | 见方式 3。注意：`disable-auto-update-panel: true` **只阻止定期更新**，文件缺失时仍会下载一次 |
+
+### 根治：四种方式（任选，推荐方式 1）
+
+**方式 1 · nginx 直接伺服补丁版（最稳，也顺手解决缓存）**
+
+```nginx
+location = /management.html {
+    alias /绝对路径/management.html;     # 指向补丁版那一份
+    add_header Cache-Control "no-cache" always;
+}
+```
+
+改完 `nginx -t && nginx -s reload`。面板不再经过 CPA —— 宿主怎么覆盖它自己那份都无所谓，浏览器也不会再拿到旧缓存。
+
+**方式 2 · Docker：把面板挂载进容器**
+
+```bash
+docker run ... -v /宿主机路径/management.html:/CLIProxyAPI/static/management.html eceasy/cli-proxy-api:latest
+```
+
+`docker cp` 写进的是**容器可写层**：`docker restart` 之后还在，但容器一被**重建**（重新 `docker run`、`compose up --force-recreate`、升级镜像）就回退成镜像里的原版。
+
+**方式 3 · 让"重新下载"下到我们的版本**
+
+```yaml
+remote-management:
+  panel-github-repository: "https://github.com/StarzL1kerain/CPA-Panel-PluginQuota"
+```
+
+宿主若下载面板，取的就是本仓库 Release 里的 `management.html`（文件名正好一致）。前提是 GitHub API 可达（未鉴权时每出口 IP 每小时 60 次）；限流时会回退到官方面板。
+
+**方式 4 · 兜底：把文件设为不可改**（需要 root；要更新时先解除）
+
+```bash
+sudo chattr +i ~/.config/cliproxyapi/static/management.html    # 解除：sudo chattr -i … 
+```
+
 ## 生效后的表现
 
 - 凭据卡片底部出现 **「点击此处刷新额度」**（点一下取数并渲染窗口条）
