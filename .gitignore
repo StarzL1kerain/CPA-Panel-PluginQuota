@@ -1,0 +1,8 @@
+# 构建中间产物
+node_modules/
+dist/
+panel.tar.gz
+Cli-Proxy-API-Management-Center-*/
+
+# 部署时的备份
+*.bak-*

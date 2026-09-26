@@ -1,0 +1,7 @@
+# 补丁与脚本必须是 LF：Windows 检出时被转成 CRLF 会导致 patch 套用失败、shell 脚本无法在 Linux 执行
+* text=auto eol=lf
+
+*.png binary
+
+# 2.8 MB 的构建产物，不做任何换行/编码转换
+management.html -text
