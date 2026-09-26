@@ -96,11 +96,20 @@ curl -L -o <路径> \
 #### Docker
 
 面板在**容器里面**（容器自带一份），宿主机上直接看不到，所以要进容器或用 `docker cp`。
-先在宿主机上拿到容器名/ID：
+先取到容器 ID —— **按名字过滤器直接拿，不用手动抄**：
 
 ```bash
-docker ps                    # 找你的 CPA 容器（例如 eceasy/cli-proxy-api）
+# 把 cliproxyapi 换成你的容器名（不确定就先 docker ps 看一眼）
+CID=$(sudo docker ps -qf name=cliproxyapi)
+echo "$CID"
+
+# 名字不确定时，也可以按镜像找：
+# CID=$(sudo docker ps -q --filter ancestor=eceasy/cli-proxy-api:latest)
 ```
+
+> `docker ps -qf name=…` 是**子串匹配**，`name=cliproxyapi` 能命中 `cliproxyapi`、`cli-proxy-api` 这类名字；
+> 取到空值时说明没匹配上，换名字再试。上面的 `sudo` 是因为本机 docker 需要 root ——
+> 如果你的账号在 `docker` 组里，去掉即可。
 
 **方式 A：直接拷进容器**（最快；改的是容器的可写层）
 
@@ -110,12 +119,12 @@ curl -L -o /tmp/management.html \
   https://github.com/StarzL1kerain/CPA-Panel-PluginQuota/releases/latest/download/management.html
 
 # ② 备份容器里原来的面板，再覆盖进去
-docker exec <容器> cp -a /CLIProxyAPI/static/management.html \
+sudo docker exec "$CID" cp -a /CLIProxyAPI/static/management.html \
   /CLIProxyAPI/static/management.html.bak-$(date +%Y%m%d-%H%M%S)
-docker cp /tmp/management.html <容器>:/CLIProxyAPI/static/management.html
+sudo docker cp /tmp/management.html "$CID":/CLIProxyAPI/static/management.html
 
 # ③ 校验（容器里没 curl 就直接查文件；期望 14）
-docker exec <容器> sh -c 'grep -o plugin_quota /CLIProxyAPI/static/management.html | wc -l'
+sudo docker exec "$CID" sh -c 'grep -o plugin_quota /CLIProxyAPI/static/management.html | wc -l'
 ```
 
 > ⚠️ `docker cp` 写进的是**容器的可写层**：`docker restart` 之后还在，但**容器被重建**就没了
@@ -213,6 +222,8 @@ docker run ... -v /宿主机路径/management.html:/CLIProxyAPI/static/managemen
 ```
 
 `docker cp` 写进的是**容器可写层**：`docker restart` 之后还在，但容器一被**重建**（重新 `docker run`、`compose up --force-recreate`、升级镜像）就回退成镜像里的原版。
+
+已经在跑的容器要改成这个挂载，得用同样的参数（或 compose 文件）**重建一次**；重建之后面板就固定在宿主机上那份，容器怎么重建都不丢。切过去之前，先跑上面那句 `grep -o plugin_quota … | wc -l` 确认容器里的确实被重置了（得 0），免得白折腾。
 
 **方式 3 · 让"重新下载"下到我们的版本**
 
