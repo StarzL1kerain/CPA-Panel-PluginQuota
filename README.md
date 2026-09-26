@@ -1,6 +1,6 @@
-# PanelPluginQuota · 管理面板插件额度补丁
+# CPA-Panel-PluginQuota · 管理面板插件额度补丁
 
-给 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 的**官方管理面板**加上**插件额度支持**：
+给 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)（CPA）的**官方管理面板**加上**插件额度支持**：
 打上这个补丁后，任何声明了 `quota_provider` 能力的 CPA 插件都能在面板上直接看到额度卡片。
 
 ![预期效果](预期效果.png)
