@@ -95,44 +95,52 @@ curl -L -o <路径> \
 
 #### Docker
 
-面板在**容器里面**（容器自带一份），宿主机上直接看不到，所以要进容器或用 `docker cp`。
-**不要手抄任何容器 ID** —— 先让脚本自己找出来：三种过滤依次尝试，最后一种是通用探测。
+面板在**容器里面**（容器自带一份），宿主机上直接看不到。
+
+> **先记住一件事：下面的「下载」是在宿主机上做的，容器不需要联网。**
+> 宿主机把文件下好，再用 `docker cp` 拷进容器 —— 所以容器里有没有 `curl`、能不能上外网，都不影响。
+
+**第 1 步 · 在宿主机上：找到 CPA 容器**
 
 ```bash
-# ① 按名字（子串匹配：cliproxyapi 能命中 cli-proxy-api 这类名字）
-CID=$(sudo docker ps -qf name=cliproxyapi)
-# ② 按镜像
-[ -n "$CID" ] || CID=$(sudo docker ps -q --filter ancestor=eceasy/cli-proxy-api:latest)
-# ③ 通用探测：正在运行的容器里，哪个有 /CLIProxyAPI 就是它
-[ -n "$CID" ] || CID=$(sudo docker ps -q | while read -r id; do
-  sudo docker exec "$id" test -d /CLIProxyAPI 2>/dev/null && echo "$id"
+CID=$(sudo docker ps -qf name=cliproxyapi)                                  # 按名字找（子串匹配）
+[ -n "$CID" ] || CID=$(sudo docker ps -q --filter ancestor=eceasy/cli-proxy-api:latest)   # 没找到：按镜像找
+[ -n "$CID" ] || CID=$(sudo docker ps -q | while read -r id; do             # 还找不到：通用探测
+  sudo docker exec "$id" test -d /CLIProxyAPI 2>/dev/null && echo "$id"      #   谁有 /CLIProxyAPI 就是它
 done)
 : "${CID:?没匹配到 CPA 容器，请 sudo docker ps 看一眼真实的名字或镜像}"
 echo "CPA 容器 = $CID"
 ```
 
-> 上面用 `sudo` 是因为本机 docker 需要 root；如果你的账号在 `docker` 组里，去掉 `sudo` 即可。
+> 上面是"依次尝试三种办法找容器"：按名字 → 按镜像 → 挨个容器看谁有 `/CLIProxyAPI` 目录。
+> **不用逐行读懂**，整段粘进终端，最后会打印一行 `CPA 容器 = xxxxx`，拿到那个 ID 就够了。
+> `sudo` 是因为本机 docker 需要 root；账号在 `docker` 组里可去掉。
 
-**方式 A：直接拷进容器**（最快；改的是容器的可写层）
-
-拿到 ID 后一条链路走完：下载 → 备份 → 覆盖 → 校验：
+**第 2 步 · 在宿主机上：下载补丁版**（这一步跟容器无关）
 
 ```bash
-# ① 宿主机上下载补丁版
 curl -L -o /tmp/management.html \
   https://github.com/StarzL1kerain/CPA-Panel-PluginQuota/releases/latest/download/management.html
+```
 
-# ② 备份容器里原来的面板，再覆盖进去
+**第 3 步 · 从宿主机拷进容器：备份 → 覆盖 → 校验**
+
+```bash
+# 先备份容器里原来的面板
 sudo docker exec "$CID" cp -a /CLIProxyAPI/static/management.html \
   /CLIProxyAPI/static/management.html.bak-$(date +%Y%m%d-%H%M%S)
+# 把宿主机上下载好的文件拷进去
 sudo docker cp /tmp/management.html "$CID":/CLIProxyAPI/static/management.html
-
-# ③ 校验（容器里没 curl 就直接查文件；期望 14）
+# 校验：期望 14（容器里没 curl 也没关系，这条只是读文件）
 sudo docker exec "$CID" sh -c 'grep -o plugin_quota /CLIProxyAPI/static/management.html | wc -l'
 ```
 
+> 如果容器本身能上网、也有 `curl`，也可以全程在容器里做（等价，但没必要）：
+> `sudo docker exec "$CID" sh -c 'curl -L -o /tmp/m.html https://github.com/StarzL1kerain/CPA-Panel-PluginQuota/releases/latest/download/management.html && cp -a /CLIProxyAPI/static/management.html /CLIProxyAPI/static/management.html.bak-$(date +%Y%m%d-%H%M%S) && cp /tmp/m.html /CLIProxyAPI/static/management.html'`
+
 > ⚠️ `docker cp` 写进的是**容器的可写层**：`docker restart` 之后还在，但**容器被重建**就没了
 > （重新 `docker run`、`docker compose up --force-recreate`、升级镜像都会重建），需要再拷一次。
+> 想彻底摆脱这个问题，用下面的方式 B。
 
 **方式 B：把面板挂载进容器**（持久，重建也不丢）
 
