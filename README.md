@@ -41,6 +41,9 @@ cp -a $CFG/static/management.html $CFG/static/management.html.bak-$(date +%Y%m%d
 cp -a management.html $CFG/static/management.html
 ```
 
+只想拿文件、不想克隆仓库的话，去 [Releases](https://github.com/StarzL1kerain/CPA-Panel-PluginQuota/releases/latest)
+下载 `management.html` 即可（Release 里同时附了源码补丁）。
+
 或者直接跑本仓库的脚本（自动备份 + 安装 + 校验标记）：
 
 ```bash

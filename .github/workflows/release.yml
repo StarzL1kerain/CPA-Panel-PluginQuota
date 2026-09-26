@@ -1,0 +1,39 @@
+name: Release
+
+# 推 v* 标签即发布：把补丁版 management.html 与源码补丁附到 Release 资产上，
+# 这样别人不用克隆仓库、也不用装 Node 就能直接下载部署。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验产物内的补丁标记
+        run: |
+          set -e
+          count=$(grep -o plugin_quota management.html | wc -l)
+          echo "management.html: $(wc -c < management.html) 字节, plugin_quota 出现 $count 次"
+          [ "$count" -ge 14 ] || { echo "产物里 plugin_quota 出现次数不足，拒绝发布"; exit 1; }
+
+      - name: 发布
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "管理面板插件额度补丁 ${GITHUB_REF_NAME}" \
+            --notes "给 CPA 官方管理面板加上插件额度支持。
+
+          - \`management.html\`：补丁版产物，**可直接部署，无需 Node**
+          - \`panel-plugin-quota.patch\`：相对上游基线的源码补丁
+
+          上游基线：router-for-me/Cli-Proxy-API-Management-Center @ \`4530da27\`（对应发布 v1.24.2）。
+          安装、两个必须注意的坑与排错见仓库 README。" \
+            management.html panel-plugin-quota.patch
