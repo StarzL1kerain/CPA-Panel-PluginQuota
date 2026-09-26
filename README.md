@@ -29,6 +29,68 @@
 发现走 `/quota/providers`，取数走 `/quota/fetch`，渲染通用的 `groups[].buckets[]` + `summary[]`。
 **一次投入，以后任何插件的额度都能显示。**
 
+## 适配哪种 CPA 安装方式
+
+**这个补丁与安装方式无关**（它就是替换一个静态文件），但**文件放在哪由安装方式决定**。
+实测确认的规则是：
+
+> 面板文件 = **`<配置目录>/static/management.html`**
+
+（宿主的面板下载/更新机制自己也往这个路径写，见下面"另一条路"。）
+
+| 安装方式 | 配置目录 | 面板文件位置 |
+|---|---|---|
+| **Linux 一键安装脚本**（本仓库实测通过）| `~/.config/cliproxyapi/` | `~/.config/cliproxyapi/static/management.html` ✅ 实测 |
+| Arch Linux (AUR) | `~/.cli-proxy-api/`（见官方文档）| `~/.cli-proxy-api/static/management.html`（按同一规则推出，未实测）|
+| Docker | `/CLIProxyAPI/config.yaml` | **要自己挂载**：`-v /path/to/management.html:/CLIProxyAPI/static/management.html`（容器里自带的是原版）。官方文档另外要求把插件目录挂到 `/CLIProxyAPI/plugins` |
+| macOS (Homebrew) | `brew --prefix` 下的 `etc/` | 同规则，未实测 |
+| Windows | 启动时 `-config` 指向的那个文件所在目录 | 同规则，未实测 |
+| 源码编译 | 你自己指定的配置目录 | 同规则 |
+
+任何安装方式都能这样定位（先拿到配置路径，再看同级 `static/`）：
+
+```bash
+systemctl --user cat cliproxyapi.service | grep ExecStart        # Linux systemd 的启动命令
+find / -name management.html -not -path '*/node_modules/*' 2>/dev/null   # 直接找已存在的面板文件
+```
+
+部署脚本默认按 `~/.config/cliproxyapi` 走，其它安装方式用环境变量指定：
+
+```bash
+CFG=/your/config/dir PORT=8317 bash scripts/deploy.sh
+```
+
+### 另一条路：让 CPA 自己从本仓库拉面板（有前提）
+
+宿主内置面板下载/更新机制，靠这两个键：
+
+```yaml
+remote-management:
+  panel-github-repository: "https://github.com/StarzL1kerain/CPA-Panel-PluginQuota"
+  disable-auto-update-panel: false    # false = 允许宿主自己更新（这条路径会做摘要校验）
+```
+
+宿主会去查该仓库的**最新 Release**，下载其中名为 `management.html` 的资产 —— 本仓库的 Release 正好就是这个名字。
+
+**但这条路有前提，已实测**：查 Release 走的是 **GitHub API**，未鉴权时**每个出口 IP 每小时只有 60 次**。
+在某台服务器上实测时，宿主的出口 IP 被限流，日志是：
+
+```
+[updater.go:247] failed to fetch latest management release information, trying fallback page
+  error=fetch release: unexpected status 403: API rate limit exceeded for ...
+[updater.go:300] management asset downloaded from fallback URL without digest verification
+```
+
+也就是说它会**静默回退到官方面板**（下载回来的是原版，额度功能就没了，界面本身不报错）。
+另外注意：`disable-auto-update-panel: true` 时，这条回退路径**不做摘要校验**。
+
+结论：
+
+- **宿主能稳定访问 GitHub API 时**，这条路最省事 —— 以后我们发新版，面板会自己跟着更新。
+- **否则请用手动/脚本方式**（本文档的方式一、方式二）。
+- 宿主的出口 IP 由配置里的**全局 `proxy-url`** 决定。如果那个代理的出口被 GitHub 限流，
+  插件商店的 502 / `GitHub API rate limited` 与面板回退是**同一个原因**：换出口，或就用手动安装。
+
 ## 用法
 
 ### 方式一：直接用补丁版产物（最快，推荐）
